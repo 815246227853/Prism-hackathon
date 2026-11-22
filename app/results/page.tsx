@@ -5,11 +5,21 @@ import ResultsList, { type Interview } from "./ResultsList";
 export const dynamic = "force-dynamic";
 
 export default async function ResultsPage() {
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SECRET_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseSecret = process.env.SUPABASE_SECRET_KEY;
+  // Supabase is optional for now: render an empty state instead of crashing.
+  if (!supabaseUrl || !supabaseSecret) {
+    return (
+      <div className="mx-auto max-w-3xl px-6 py-12 font-sans">
+        <h1 className="mb-6 text-2xl font-semibold tracking-tight">Interviews</h1>
+        <ResultsList interviews={[]} />
+      </div>
+    );
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseSecret, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
 
   const { data, error } = await supabase
     .from("interviews")

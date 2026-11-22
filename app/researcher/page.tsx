@@ -6,11 +6,16 @@ import "./researcher.css";
 export const dynamic = "force-dynamic";
 
 export default async function ResearcherPage() {
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SECRET_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseSecret = process.env.SUPABASE_SECRET_KEY;
+  // Supabase is optional for now: render an empty state instead of crashing.
+  if (!supabaseUrl || !supabaseSecret) {
+    return <ResearcherApp interviews={[]} studies={[]} kbCountByStudy={{}} />;
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseSecret, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
 
   const { data: interviews } = await supabase
     .from("interviews")

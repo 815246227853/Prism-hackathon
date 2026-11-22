@@ -1,9 +1,3 @@
-# Prism
-
-## Project history
-
-Prism development began in June 2026 (original repo: 815246227853/Prism). This repository is a fresh import of that codebase for the hackathon; all work done during the event appears as commits after the initial import.
-
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createInterview, getStudyBySlug } from "@/lib/db";
 
 type TranscriptTurn = { role?: string; message?: string | null };
 
@@ -26,12 +26,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function POST(request: Request) {
   const apiKey = process.env.ELEVENLABS_API_KEY;
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseSecret = process.env.SUPABASE_SECRET_KEY;
 
-  if (!apiKey || !supabaseUrl || !supabaseSecret) {
+  if (!apiKey) {
     return NextResponse.json(
-      { error: "Missing ELEVENLABS_API_KEY, NEXT_PUBLIC_SUPABASE_URL, or SUPABASE_SECRET_KEY" },
+      { error: "Missing ELEVENLABS_API_KEY" },
       { status: 500 }
     );
   }
@@ -66,31 +64,21 @@ export async function POST(request: Request) {
     );
   }
 
-  // Server-side client using the secret key bypasses RLS.
-  const supabase = createClient(supabaseUrl, supabaseSecret, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-
   // Resolve the study from its share slug (if the link carried one).
-  let studyId: string | null = null;
-  if (studySlug) {
-    const { data: study } = await supabase
-      .from("studies")
-      .select("id")
-      .eq("slug", studySlug)
-      .maybeSingle();
-    studyId = study?.id ?? null;
-  }
+  const studyId = studySlug ? (await getStudyBySlug(studySlug))?.id ?? null : null;
 
-  const { error } = await supabase.from("interviews").insert({
-    participant_name: participantName ?? null,
-    conversation_id: conversationId,
-    transcript,
-    study_id: studyId,
-  });
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  try {
+    await createInterview({
+      participant_name: participantName ?? null,
+      conversation_id: conversationId,
+      transcript,
+      study_id: studyId,
+    });
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Failed to save interview" },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json({ success: true });

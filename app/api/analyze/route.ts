@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { getInterview, matchChunks, updateInterview } from "@/lib/db";
 import OpenAI from "openai";
 
 type TranscriptTurn = { role?: string; message?: string | null };
@@ -27,14 +27,12 @@ async function fetchElevenLabsTranscript(
 }
 
 export async function POST(request: Request) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseSecret = process.env.SUPABASE_SECRET_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
   const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
 
-  if (!supabaseUrl || !supabaseSecret || !openaiKey) {
+  if (!openaiKey) {
     return NextResponse.json(
-      { error: "Missing NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SECRET_KEY, or OPENAI_API_KEY" },
+      { error: "Missing OPENAI_API_KEY" },
       { status: 500 }
     );
   }
@@ -51,18 +49,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "interviewId is required" }, { status: 400 });
   }
 
-  // Fetch the transcript (server client with secret key bypasses RLS).
-  const supabase = createClient(supabaseUrl, supabaseSecret, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-
-  const { data: interview, error: dbError } = await supabase
-    .from("interviews")
-    .select("conversation_id, transcript, study_id")
-    .eq("id", interviewId)
-    .single();
-
-  if (dbError || !interview) {
+  const interview = await getInterview(interviewId);
+  if (!interview) {
     return NextResponse.json({ error: "Interview not found" }, { status: 404 });
   }
 
@@ -73,7 +61,7 @@ export async function POST(request: Request) {
     if (elevenLabsKey && interview.conversation_id) {
       transcript = await fetchElevenLabsTranscript(interview.conversation_id, elevenLabsKey);
       if (transcript) {
-        await supabase.from("interviews").update({ transcript }).eq("id", interviewId);
+        await updateInterview(interviewId, { transcript });
       }
     }
     if (!transcript) {
@@ -109,7 +97,7 @@ export async function POST(request: Request) {
   }
 
   // RAG retrieval: embed (the first ~1000 words of) the transcript, then fetch
-  // the most relevant company-context chunks via the match_chunks RPC.
+  // the most relevant company-context chunks from the local knowledge base.
   const queryText = transcript.split(/\s+/).slice(0, 1000).join(" ");
 
   let queryEmbedding: number[];
@@ -124,19 +112,8 @@ export async function POST(request: Request) {
   }
 
   // Scope retrieval to this interview's study KB (null = global, all chunks).
-  const { data: matches, error: matchError } = await supabase.rpc("match_chunks", {
-    query_embedding: queryEmbedding,
-    match_count: 3,
-    filter_study_id: interview.study_id ?? null,
-  });
-  if (matchError) {
-    return NextResponse.json(
-      { error: `Context retrieval failed: ${matchError.message}` },
-      { status: 500 }
-    );
-  }
-
-  const contextChunks = ((matches ?? []) as { content: string }[]).map((m) => m.content);
+  const matches = await matchChunks(queryEmbedding, 3, interview.study_id ?? null);
+  const contextChunks = matches.map((m) => m.content);
   const companyContext = contextChunks.length
     ? contextChunks.map((c, i) => `[${i + 1}] ${c}`).join("\n\n")
     : "(no relevant company context found)";
@@ -181,13 +158,11 @@ export async function POST(request: Request) {
   const result = { ...insights, context_used: contextChunks };
 
   // Persist the generated insights into the interview's analysis column.
-  const { error: saveError } = await supabase
-    .from("interviews")
-    .update({ analysis: result })
-    .eq("id", interviewId);
-  if (saveError) {
+  try {
+    await updateInterview(interviewId, { analysis: result });
+  } catch (err) {
     return NextResponse.json(
-      { error: `Analysis generated but failed to save: ${saveError.message}` },
+      { error: `Analysis generated but failed to save: ${err instanceof Error ? err.message : err}` },
       { status: 500 }
     );
   }

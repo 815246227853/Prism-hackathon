@@ -1,17 +1,8 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createStudy } from "@/lib/db";
 
-// Creates a study (no auth — shared pool for now). Server-side service key.
+// Creates a study (no auth — shared pool for now).
 export async function POST(request: Request) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseSecret = process.env.SUPABASE_SECRET_KEY;
-  if (!supabaseUrl || !supabaseSecret) {
-    return NextResponse.json(
-      { error: "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SECRET_KEY" },
-      { status: 500 }
-    );
-  }
-
   let body: { name?: string; objective?: string; audience?: string; questions?: unknown };
   try {
     body = await request.json();
@@ -33,19 +24,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "at least one question is required" }, { status: 400 });
   }
 
-  const supabase = createClient(supabaseUrl, supabaseSecret, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-
-  const { data, error } = await supabase
-    .from("studies")
-    .insert({ name, objective, audience: audience || null, questions })
-    .select("id, slug")
-    .single();
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  try {
+    const study = await createStudy({ name, objective, audience: audience || null, questions });
+    return NextResponse.json({ id: study.id, slug: study.slug });
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Failed to create study" },
+      { status: 500 }
+    );
   }
-
-  return NextResponse.json(data); // { id, slug }
 }

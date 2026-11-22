@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { addChunks } from "@/lib/db";
 import OpenAI from "openai";
 
 const CHUNK_SIZE = 500; // words per chunk
@@ -21,12 +21,10 @@ function chunkText(text: string): string[] {
 
 export async function POST(request: Request) {
   const openaiKey = process.env.OPENAI_API_KEY;
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseSecret = process.env.SUPABASE_SECRET_KEY;
 
-  if (!openaiKey || !supabaseUrl || !supabaseSecret) {
+  if (!openaiKey) {
     return NextResponse.json(
-      { error: "Missing OPENAI_API_KEY, NEXT_PUBLIC_SUPABASE_URL, or SUPABASE_SECRET_KEY" },
+      { error: "Missing OPENAI_API_KEY" },
       { status: 500 }
     );
   }
@@ -75,20 +73,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Failed to create embeddings" }, { status: 502 });
   }
 
-  // Secret-key server client bypasses RLS.
-  const supabase = createClient(supabaseUrl, supabaseSecret, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-
-  const rows = chunks.map((content, i) => ({
-    content,
-    embedding: embeddings[i],
-    study_id: studyId,
-  }));
-
-  const { error } = await supabase.from("doc_chunks").insert(rows);
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  try {
+    await addChunks(
+      chunks.map((content, i) => ({ content, embedding: embeddings[i] })),
+      studyId
+    );
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Failed to save chunks" },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json({ chunks: chunks.length });

@@ -906,7 +906,7 @@ function SettingsShell() {
         <div className="set-card"><h3>Connected services</h3><div className="cap">Powering live voice, analysis, and storage.</div>
           <div className="conn"><span className="dotok"></span>ElevenLabs <span className="svc">· live voice</span><span className="pill">Connected</span></div>
           <div className="conn"><span className="dotok"></span>Claude (Anthropic) <span className="svc">· analysis</span><span className="pill">Connected</span></div>
-          <div className="conn"><span className="dotok"></span>Supabase <span className="svc">· storage + RAG</span><span className="pill">Connected</span></div>
+          <div className="conn"><span className="dotok"></span>Local storage <span className="svc">· data/db.json + RAG</span><span className="pill">Connected</span></div>
         </div>
       </div>
     </section>

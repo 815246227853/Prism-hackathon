@@ -1,44 +1,21 @@
-import { createClient } from "@supabase/supabase-js";
+import { chunkCountByStudy, listInterviews, listStudies } from "@/lib/db";
 import ResearcherApp, { type Interview, type Study } from "./ResearcherApp";
 import "./researcher.css";
 
-// Reads from the database on each request (secret key bypasses RLS).
+// Reads from the local data store on each request.
 export const dynamic = "force-dynamic";
 
 export default async function ResearcherPage() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseSecret = process.env.SUPABASE_SECRET_KEY;
-  // Supabase is optional for now: render an empty state instead of crashing.
-  if (!supabaseUrl || !supabaseSecret) {
-    return <ResearcherApp interviews={[]} studies={[]} kbCountByStudy={{}} />;
-  }
-
-  const supabase = createClient(supabaseUrl, supabaseSecret, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-
-  const { data: interviews } = await supabase
-    .from("interviews")
-    .select("id, participant_name, conversation_id, transcript, created_at, analysis, study_id")
-    .order("created_at", { ascending: false });
-
-  const { data: studies } = await supabase
-    .from("studies")
-    .select("id, name, objective, slug, created_at")
-    .order("created_at", { ascending: false });
-
-  // Per-study knowledge-base size (chunks tagged with each study_id).
-  const { data: chunkRows } = await supabase.from("doc_chunks").select("study_id");
-  const kbCountByStudy: Record<string, number> = {};
-  for (const row of chunkRows ?? []) {
-    const sid = (row as { study_id: string | null }).study_id;
-    if (sid) kbCountByStudy[sid] = (kbCountByStudy[sid] ?? 0) + 1;
-  }
+  const [interviews, studies, kbCountByStudy] = await Promise.all([
+    listInterviews(),
+    listStudies(),
+    chunkCountByStudy(),
+  ]);
 
   return (
     <ResearcherApp
-      interviews={(interviews ?? []) as Interview[]}
-      studies={(studies ?? []) as Study[]}
+      interviews={interviews as Interview[]}
+      studies={studies as Study[]}
       kbCountByStudy={kbCountByStudy}
     />
   );

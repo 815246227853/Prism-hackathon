@@ -405,7 +405,7 @@ export default function Landing() {
 
       <section className="logos"><div className="wrap in">
         <span className="pb">Powered by</span>
-        <a className="lg" href="#">ElevenLabs</a><a className="lg" href="#">Claude</a><a className="lg" href="#">Supabase</a><a className="lg" href="#">pgvector</a><a className="lg" href="#">Voyage AI</a>
+        <a className="lg" href="#">ElevenLabs</a><a className="lg" href="#">Claude</a><a className="lg" href="#">Voyage AI</a>
       </div></section>
 
       <section className="prism-section" aria-label="One conversation, refracted into insight">

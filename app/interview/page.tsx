@@ -23,10 +23,8 @@ const TriLogo = ({ size = 16 }: { size?: number }) => (
   </svg>
 );
 
-// Builds ElevenLabs startSession overrides from the study (Layer B).
-// Returns {} when there's no study so the dashboard-default agent is used.
-function buildStudyOverrides(study: Study | null) {
-  if (!study) return {};
+// Builds the interviewer prompt + greeting from the study.
+function buildStudyPrompt(study: Study) {
   const qs = study.questions.map((q) => q.trim()).filter(Boolean);
   const questionList = qs.map((q, i) => `${i + 1}. ${q}`).join("\n");
   const systemPrompt =
@@ -37,8 +35,27 @@ function buildStudyOverrides(study: Study | null) {
   const firstMessage = qs.length
     ? `Hi! Thanks so much for taking the time to chat. To start — ${qs[0]}`
     : `Hi! Thanks so much for taking the time to chat. To start, could you tell me a bit about your experience?`;
+  return { systemPrompt, firstMessage };
+}
+
+// Builds ElevenLabs startSession overrides from the study (Layer B).
+// Returns {} when there's no study so the dashboard-default agent is used.
+function buildStudyOverrides(study: Study | null) {
+  if (!study) return {};
+  const { systemPrompt, firstMessage } = buildStudyPrompt(study);
   return { overrides: { agent: { prompt: { prompt: systemPrompt }, firstMessage } } };
 }
+
+// Prompt for the OpenAI text-interview fallback (used when voice isn't configured).
+const GENERIC_TEXT_PROMPT = {
+  systemPrompt:
+    "You are Prism, a warm, curious user researcher conducting a short interview with someone who " +
+    "recently left product feedback. Understand their goal, what frustrated them, and the one thing " +
+    "they'd most want fixed. Ask one question at a time with natural follow-ups. After about 5-7 " +
+    "exchanges, thank them and wrap up.",
+  firstMessage:
+    "Hi! Thanks so much for taking the time to chat. To start, could you tell me a bit about what you were trying to do when you left your feedback?",
+};
 
 function InterviewInner() {
   // --- voice + saving state (unchanged logic) ---
@@ -53,6 +70,10 @@ function InterviewInner() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [secs, setSecs] = useState(0);
   const [typed, setTyped] = useState("");
+  // Text fallback: true when ElevenLabs isn't configured, so OpenAI runs the interview.
+  const [textMode, setTextMode] = useState(false);
+  const [aiThinking, setAiThinking] = useState(false);
+  const textPromptRef = useRef(GENERIC_TEXT_PROMPT);
   const tmrRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
 
@@ -135,27 +156,97 @@ function InterviewInner() {
     if (t) t.scrollTop = t.scrollHeight;
   }, [messages, isSpeaking]);
 
+  function startTimer() {
+    setSecs(0);
+    if (tmrRef.current) clearInterval(tmrRef.current);
+    tmrRef.current = setInterval(() => setSecs((s) => s + 1), 1000);
+  }
+
+  // OpenAI-powered typed interview, used when voice (ElevenLabs) isn't available.
+  function startTextInterview() {
+    const prompt = study ? buildStudyPrompt(study) : GENERIC_TEXT_PROMPT;
+    textPromptRef.current = prompt;
+    setTextMode(true);
+    setMode("type");
+    setMessages([{ source: "ai", text: prompt.firstMessage }]);
+    startTimer();
+  }
+
   async function startInterview() {
-    // Mic permission first, then signed URL, then start the session (unchanged).
-    await navigator.mediaDevices.getUserMedia({ audio: true });
     emailRef.current = email;
     setMessages([]);
     setScreen("interview");
-    const res = await fetch("/api/signed-url");
-    const { signedUrl } = await res.json();
+
+    let signedUrl: string | undefined;
+    try {
+      const res = await fetch("/api/signed-url");
+      if (res.ok) signedUrl = (await res.json()).signedUrl;
+    } catch {
+      // handled below
+    }
+    if (!signedUrl) {
+      startTextInterview();
+      return;
+    }
+
+    // Mic permission, then start the voice session. Fall back to text if denied.
+    try {
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      startTextInterview();
+      return;
+    }
 
     // Per-study interviewer prompt (Layer B). If no study loaded, start plain
     // so the dashboard-default agent behavior applies (generic fallback).
     startSession({ signedUrl, connectionType: "websocket", ...buildStudyOverrides(study) });
   }
 
-  function sendTyped() {
+  async function sendTyped() {
     const v = typed.trim();
-    if (!v) return;
-    sendUserMessage(v);
-    setMessages((m) => [...m, { source: "user", text: v }]);
+    if (!v || aiThinking) return;
     setTyped("");
+
+    if (!textMode) {
+      sendUserMessage(v);
+      setMessages((m) => [...m, { source: "user", text: v }]);
+      return;
+    }
+
+    const history: Msg[] = [...messages, { source: "user", text: v }];
+    setMessages(history);
+    setAiThinking(true);
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ systemPrompt: textPromptRef.current.systemPrompt, messages: history }),
+      });
+      const data = await res.json();
+      const reply: string = res.ok
+        ? data.reply
+        : "Sorry, I had trouble responding just now. Could you say that again?";
+      setMessages((m) => [...m, { source: "ai", text: reply }]);
+    } catch {
+      setMessages((m) => [
+        ...m,
+        { source: "ai", text: "Sorry, I had trouble responding just now. Could you say that again?" },
+      ]);
+    } finally {
+      setAiThinking(false);
+    }
   }
+
+  function endInterview() {
+    if (!textMode) {
+      endSession();
+      return;
+    }
+    if (tmrRef.current) clearInterval(tmrRef.current);
+    setScreen("done");
+  }
+
+  const live = status === "connected" || textMode;
 
   const emailOk = /\S+@\S+\.\S+/.test(email.trim());
   const mmss =
@@ -163,8 +254,11 @@ function InterviewInner() {
 
   const stageClass =
     "stage" + (isSpeaking ? " speaking" : "") + (isListening ? " listening" : "");
-  const vstatus =
-    status === "connecting"
+  const vstatus = textMode
+    ? aiThinking
+      ? "<b>Prism is typing</b>"
+      : "Text interview"
+    : status === "connecting"
       ? "Connecting…"
       : isSpeaking
         ? "<b>Prism is speaking</b>"
@@ -311,6 +405,7 @@ function InterviewInner() {
           </div>
           <span className="rec"><span className="d"></span><span>{mmss}</span></span>
           <div className="ctrls">
+            {!textMode && (
             <button
               className="linkbtn"
               onClick={() => setMode((m) => (m === "voice" ? "type" : "voice"))}
@@ -332,7 +427,8 @@ function InterviewInner() {
                 </>
               )}
             </button>
-            <button className="endbtn" onClick={() => endSession()}>End</button>
+            )}
+            <button className="endbtn" onClick={endInterview}>End</button>
           </div>
         </div>
 
@@ -357,9 +453,9 @@ function InterviewInner() {
                 <span className="conv-presence"><span className="pdot"></span>Prism</span>
                 <span className="t">Conversation</span>
               </div>
-              <span className="p">{status === "connected" ? "Live" : "Getting started…"}</span>
+              <span className="p">{live ? "Live" : "Getting started…"}</span>
             </div>
-            <div className="progbar"><div style={{ width: status === "connected" ? "100%" : "0%" }} /></div>
+            <div className="progbar"><div style={{ width: live ? "100%" : "0%" }} /></div>
             <div className="thread" ref={threadRef}>
               {messages.map((m, i) => (
                 <div key={i} className={"msg " + (m.source === "ai" ? "ai" : "me")}>
@@ -367,7 +463,7 @@ function InterviewInner() {
                   <div className="bubble">{m.text}</div>
                 </div>
               ))}
-              {isSpeaking && (
+              {(isSpeaking || aiThinking) && (
                 <div className="msg ai">
                   <div className="ava"></div>
                   <div className="bubble">
@@ -389,7 +485,7 @@ function InterviewInner() {
                   }
                 }}
               />
-              <button className="send" onClick={sendTyped} aria-label="Send" disabled={!typed.trim()}>
+              <button className="send" onClick={sendTyped} aria-label="Send" disabled={!typed.trim() || aiThinking}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M5 12h14M13 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>

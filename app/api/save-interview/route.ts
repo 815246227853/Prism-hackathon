@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { createInterview, getStudyBySlug } from "@/lib/db";
 
 type TranscriptTurn = { role?: string; message?: string | null };
@@ -25,43 +26,55 @@ function combineTranscript(turns: TranscriptTurn[] = []): string {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function POST(request: Request) {
-  const apiKey = process.env.ELEVENLABS_API_KEY;
-
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "Missing ELEVENLABS_API_KEY" },
-      { status: 500 }
-    );
-  }
-
-  let body: { conversationId?: string; participantName?: string; studySlug?: string };
+  let body: {
+    conversationId?: string;
+    participantName?: string;
+    studySlug?: string;
+    // Typed (text-mode) interviews send their transcript directly.
+    transcript?: TranscriptTurn[];
+  };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { conversationId, participantName, studySlug } = body;
-  if (!conversationId) {
-    return NextResponse.json({ error: "conversationId is required" }, { status: 400 });
-  }
-
-  // The transcript can take a few seconds to be ready after the call ends.
-  // If it comes back empty, wait 2s and retry once.
+  const { participantName, studySlug } = body;
+  let conversationId = body.conversationId;
   let transcript = "";
-  try {
-    const data = await fetchConversation(conversationId, apiKey);
-    transcript = combineTranscript(data.transcript);
+
+  if (Array.isArray(body.transcript)) {
+    // Text interview: no ElevenLabs conversation to fetch.
+    transcript = combineTranscript(body.transcript.slice(0, 200));
     if (!transcript) {
-      await sleep(2000);
-      const retry = await fetchConversation(conversationId, apiKey);
-      transcript = combineTranscript(retry.transcript);
+      return NextResponse.json({ error: "transcript is empty" }, { status: 400 });
     }
-  } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to fetch transcript" },
-      { status: 502 }
-    );
+    conversationId = conversationId || `text-${randomUUID()}`;
+  } else {
+    const apiKey = process.env.ELEVENLABS_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json({ error: "Missing ELEVENLABS_API_KEY" }, { status: 500 });
+    }
+    if (!conversationId) {
+      return NextResponse.json({ error: "conversationId is required" }, { status: 400 });
+    }
+
+    // The transcript can take a few seconds to be ready after the call ends.
+    // If it comes back empty, wait 2s and retry once.
+    try {
+      const data = await fetchConversation(conversationId, apiKey);
+      transcript = combineTranscript(data.transcript);
+      if (!transcript) {
+        await sleep(2000);
+        const retry = await fetchConversation(conversationId, apiKey);
+        transcript = combineTranscript(retry.transcript);
+      }
+    } catch (err) {
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : "Failed to fetch transcript" },
+        { status: 502 }
+      );
+    }
   }
 
   // Resolve the study from its share slug (if the link carried one).

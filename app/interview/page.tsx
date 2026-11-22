@@ -243,6 +243,22 @@ function InterviewInner() {
       return;
     }
     if (tmrRef.current) clearInterval(tmrRef.current);
+    // Save the typed transcript (best-effort; the thank-you screen still shows).
+    const studySlug = new URLSearchParams(window.location.search).get("study") || undefined;
+    if (messages.some((m) => m.source === "user")) {
+      fetch("/api/save-interview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          participantName: emailRef.current || undefined,
+          studySlug,
+          transcript: messages.map((m) => ({
+            role: m.source === "ai" ? "agent" : "user",
+            message: m.text,
+          })),
+        }),
+      }).catch(() => {});
+    }
     setScreen("done");
   }
 

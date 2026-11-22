@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { VoiceOrb } from "@/components/VoiceOrb";
+import { studyShareLink } from "@/lib/studyLink";
 
 export type Interview = {
   id: string;
@@ -18,6 +19,7 @@ export type Study = {
   name: string;
   objective: string;
   slug: string;
+  questions?: string[];
   created_at: string;
 };
 
@@ -116,15 +118,20 @@ export default function ResearcherApp({
   const [kbText, setKbText] = useState("");
 
   // Create-study submission
-  const [created, setCreated] = useState<{ name: string; slug: string } | null>(null);
+  const [created, setCreated] = useState<{ name: string; slug: string; objective: string; questions: string[] } | null>(null);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
 
   const validQuestions = questions.map((q) => q.trim()).filter(Boolean);
   const canCreateStep0 = name.trim().length > 0 && objective.trim().length > 0;
   const canCreate = canCreateStep0 && validQuestions.length > 0;
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
   const shareLink = created
-    ? `${typeof window !== "undefined" ? window.location.origin : ""}/interview?study=${created.slug}`
+    ? studyShareLink(origin, created.slug, {
+        name: created.name,
+        objective: created.objective,
+        questions: created.questions,
+      })
     : "";
 
   function queueKnowledge() {
@@ -163,7 +170,7 @@ export default function ResearcherApp({
           body: JSON.stringify({ text, studyId: data.id }),
         });
       }
-      setCreated({ name: name.trim(), slug: data.slug });
+      setCreated({ name: name.trim(), slug: data.slug, objective: objective.trim(), questions: validQuestions });
       setCreating(false);
       setView("collecting");
     } catch {
@@ -575,7 +582,11 @@ export default function ResearcherApp({
                       <CopyButton
                         label="Share link"
                         className="btn btn-dark btn-sm"
-                        text={`${typeof window !== "undefined" ? window.location.origin : ""}/interview?study=${selectedStudy.slug}`}
+                        text={studyShareLink(origin, selectedStudy.slug, {
+                          name: selectedStudy.name,
+                          objective: selectedStudy.objective,
+                          questions: selectedStudy.questions ?? [],
+                        })}
                       />
                     ) : (
                       <a className="btn btn-dark btn-sm">Share link</a>

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ConversationProvider, useConversation } from "@elevenlabs/react";
 import { VoiceOrb } from "@/components/VoiceOrb";
+import { decodeStudy } from "@/lib/studyLink";
 import "./interview.css";
 
 type Screen = "consent" | "interview" | "done";
@@ -59,9 +60,19 @@ function InterviewInner() {
   // call so we can build a per-study interviewer prompt. Null = generic fallback.
   const [study, setStudy] = useState<Study | null>(null);
   useEffect(() => {
-    const slug = new URLSearchParams(window.location.search).get("study");
-    if (!slug) return;
+    const params = new URLSearchParams(window.location.search);
+    const embedded = params.get("d");
+    const slug = params.get("study");
+    if (!embedded && !slug) return;
     (async () => {
+      // Preferred: the study is embedded in the link itself (?d=...).
+      const fromLink = embedded ? decodeStudy(embedded) : null;
+      if (fromLink) {
+        setStudy(fromLink);
+        return;
+      }
+      // Fallback for older links: look the study up by slug.
+      if (!slug) return;
       try {
         const res = await fetch(`/api/study?slug=${encodeURIComponent(slug)}`);
         if (res.ok) setStudy(await res.json());
